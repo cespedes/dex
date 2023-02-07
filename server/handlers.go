@@ -352,7 +352,7 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		if err := s.templates.password(r, w, r.URL.String(), "", usernamePrompt(pwConn), false, backLink); err != nil {
+		if err := s.templates.password(r, w, r.URL.String(), "", usernamePrompt(pwConn), false, false, backLink, authReq.ClientID); err != nil {
 			s.logger.Errorf("Server template error: %v", err)
 		}
 	case http.MethodPost:
@@ -360,18 +360,49 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		password := r.FormValue("password")
 		scopes := parseScopes(authReq.Scopes)
 
+		client, err := s.storage.GetClient(authReq.ClientID)
+		if err != nil {
+			s.logger.Errorf("Impossible error: GetClient returned error: %v", err)
+			s.renderError(r, w, http.StatusInternalServerError, fmt.Sprintf("Login error: %v", err))
+			return
+		}
+		if len(client.ValidGroups) > 0 {
+			scopes.Groups = true
+		}
+
 		identity, ok, err := pwConn.Login(r.Context(), scopes, username, password)
 		if err != nil {
 			s.logger.Errorf("Failed to login user: %v", err)
 			s.renderError(r, w, http.StatusInternalServerError, fmt.Sprintf("Login error: %v", err))
 			return
 		}
+		if ok && len(client.ValidGroups) > 0 {
+			ok = false
+			s.logger.Infof("login ok: client=%s username=%s. Checking if user's groups %v has any valid groups %v", client.ID, username, identity.Groups, client.ValidGroups)
+			for _, v := range client.ValidGroups {
+				for _, g := range identity.Groups {
+					if v == g {
+						ok = true
+						break
+					}
+				}
+			}
+			if !ok {
+				s.logger.Infof("unauthorized: client=%s username=%s ip=%s", client.ID, username, r.Header.Get("X-Forwarded-For"))
+				if err := s.templates.password(r, w, r.URL.String(), username, usernamePrompt(pwConn), false, true, backLink, client.ID); err != nil {
+					s.logger.Errorf("Server template error: %v", err)
+				}
+				return
+			}
+		}
 		if !ok {
-			if err := s.templates.password(r, w, r.URL.String(), username, usernamePrompt(pwConn), true, backLink); err != nil {
+			s.logger.Infof("login failed: client=%s username=%s ip=%s", authReq.ClientID, username, r.Header.Get("X-Forwarded-For"))
+			if err := s.templates.password(r, w, r.URL.String(), username, usernamePrompt(pwConn), true, false, backLink, client.ID); err != nil {
 				s.logger.Errorf("Server template error: %v", err)
 			}
 			return
 		}
+		s.logger.Infof("login ok: client=%s username=%s ip=%s", client.ID, username, r.Header.Get("X-Forwarded-For"))
 		redirectURL, canSkipApproval, err := s.finalizeLogin(identity, authReq, conn.Connector)
 		if err != nil {
 			s.logger.Errorf("Failed to finalize login: %v", err)

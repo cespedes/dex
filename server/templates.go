@@ -291,7 +291,7 @@ func (t *templates) login(r *http.Request, w http.ResponseWriter, connectors []c
 	return renderTemplate(w, t.loginTmpl, data)
 }
 
-func (t *templates) password(r *http.Request, w http.ResponseWriter, postURL, lastUsername, usernamePrompt string, lastWasInvalid bool, backLink string) error {
+func (t *templates) password(r *http.Request, w http.ResponseWriter, postURL, lastUsername, usernamePrompt string, lastWasInvalid bool, lastWasUnauthorized bool, backLink string, clientID string) error {
 	if lastWasInvalid {
 		w.WriteHeader(http.StatusUnauthorized)
 	}
@@ -301,8 +301,10 @@ func (t *templates) password(r *http.Request, w http.ResponseWriter, postURL, la
 		Username       string
 		UsernamePrompt string
 		Invalid        bool
+		Unauthorized   bool
 		ReqPath        string
-	}{postURL, backLink, lastUsername, usernamePrompt, lastWasInvalid, r.URL.Path}
+		Client         string
+	}{postURL, backLink, lastUsername, usernamePrompt, lastWasInvalid, lastWasUnauthorized, r.URL.Path, clientID}
 	return renderTemplate(w, t.passwordTmpl, data)
 }
 
@@ -335,11 +337,11 @@ func (t *templates) oob(r *http.Request, w http.ResponseWriter, code string) err
 
 func (t *templates) err(r *http.Request, w http.ResponseWriter, errCode int, errMsg string) error {
 	w.WriteHeader(errCode)
-	data := struct {
-		ErrType string
-		ErrMsg  string
-		ReqPath string
-	}{http.StatusText(errCode), errMsg, r.URL.Path}
+	data := map[string]string{
+		"ErrType": http.StatusText(errCode),
+		"ErrMsg":  errMsg,
+		"ReqPath": r.URL.Path,
+	}
 	if err := t.errorTmpl.Execute(w, data); err != nil {
 		return fmt.Errorf("rendering template %s failed: %s", t.errorTmpl.Name(), err)
 	}

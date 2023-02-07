@@ -170,6 +170,9 @@ type Client struct {
 	// Name and LogoURL used when displaying this client to the end user.
 	Name    string `json:"name" yaml:"name"`
 	LogoURL string `json:"logoURL" yaml:"logoURL"`
+
+	// if ValidGroups is not empty, login is only permitted from users in one of those groups
+	ValidGroups []string `json:"validGroups" yaml:"validGroups"`
 }
 
 // Claims represents the ID Token claims supported by the server.
