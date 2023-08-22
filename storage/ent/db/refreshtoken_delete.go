@@ -4,7 +4,6 @@ package db
 
 import (
 	"context"
-	"fmt"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
@@ -28,34 +27,7 @@ func (rtd *RefreshTokenDelete) Where(ps ...predicate.RefreshToken) *RefreshToken
 
 // Exec executes the deletion query and returns how many vertices were deleted.
 func (rtd *RefreshTokenDelete) Exec(ctx context.Context) (int, error) {
-	var (
-		err      error
-		affected int
-	)
-	if len(rtd.hooks) == 0 {
-		affected, err = rtd.sqlExec(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*RefreshTokenMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			rtd.mutation = mutation
-			affected, err = rtd.sqlExec(ctx)
-			mutation.done = true
-			return affected, err
-		})
-		for i := len(rtd.hooks) - 1; i >= 0; i-- {
-			if rtd.hooks[i] == nil {
-				return 0, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = rtd.hooks[i](mut)
-		}
-		if _, err := mut.Mutate(ctx, rtd.mutation); err != nil {
-			return 0, err
-		}
-	}
-	return affected, err
+	return withHooks[int, RefreshTokenMutation](ctx, rtd.sqlExec, rtd.mutation, rtd.hooks)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
@@ -88,6 +60,7 @@ func (rtd *RefreshTokenDelete) sqlExec(ctx context.Context) (int, error) {
 	if err != nil && sqlgraph.IsConstraintError(err) {
 		err = &ConstraintError{msg: err.Error(), wrap: err}
 	}
+	rtd.mutation.done = true
 	return affected, err
 }
 

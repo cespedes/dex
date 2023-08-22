@@ -22,6 +22,7 @@ type KeysQuery struct {
 	unique     *bool
 	order      []OrderFunc
 	fields     []string
+	inters     []Interceptor
 	predicates []predicate.Keys
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -34,13 +35,13 @@ func (kq *KeysQuery) Where(ps ...predicate.Keys) *KeysQuery {
 	return kq
 }
 
-// Limit adds a limit step to the query.
+// Limit the number of records to be returned by this query.
 func (kq *KeysQuery) Limit(limit int) *KeysQuery {
 	kq.limit = &limit
 	return kq
 }
 
-// Offset adds an offset step to the query.
+// Offset to start from.
 func (kq *KeysQuery) Offset(offset int) *KeysQuery {
 	kq.offset = &offset
 	return kq
@@ -53,7 +54,7 @@ func (kq *KeysQuery) Unique(unique bool) *KeysQuery {
 	return kq
 }
 
-// Order adds an order step to the query.
+// Order specifies how the records should be ordered.
 func (kq *KeysQuery) Order(o ...OrderFunc) *KeysQuery {
 	kq.order = append(kq.order, o...)
 	return kq
@@ -62,7 +63,7 @@ func (kq *KeysQuery) Order(o ...OrderFunc) *KeysQuery {
 // First returns the first Keys entity from the query.
 // Returns a *NotFoundError when no Keys was found.
 func (kq *KeysQuery) First(ctx context.Context) (*Keys, error) {
-	nodes, err := kq.Limit(1).All(ctx)
+	nodes, err := kq.Limit(1).All(newQueryContext(ctx, TypeKeys, "First"))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +86,7 @@ func (kq *KeysQuery) FirstX(ctx context.Context) *Keys {
 // Returns a *NotFoundError when no Keys ID was found.
 func (kq *KeysQuery) FirstID(ctx context.Context) (id string, err error) {
 	var ids []string
-	if ids, err = kq.Limit(1).IDs(ctx); err != nil {
+	if ids, err = kq.Limit(1).IDs(newQueryContext(ctx, TypeKeys, "FirstID")); err != nil {
 		return
 	}
 	if len(ids) == 0 {
@@ -108,7 +109,7 @@ func (kq *KeysQuery) FirstIDX(ctx context.Context) string {
 // Returns a *NotSingularError when more than one Keys entity is found.
 // Returns a *NotFoundError when no Keys entities are found.
 func (kq *KeysQuery) Only(ctx context.Context) (*Keys, error) {
-	nodes, err := kq.Limit(2).All(ctx)
+	nodes, err := kq.Limit(2).All(newQueryContext(ctx, TypeKeys, "Only"))
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +137,7 @@ func (kq *KeysQuery) OnlyX(ctx context.Context) *Keys {
 // Returns a *NotFoundError when no entities are found.
 func (kq *KeysQuery) OnlyID(ctx context.Context) (id string, err error) {
 	var ids []string
-	if ids, err = kq.Limit(2).IDs(ctx); err != nil {
+	if ids, err = kq.Limit(2).IDs(newQueryContext(ctx, TypeKeys, "OnlyID")); err != nil {
 		return
 	}
 	switch len(ids) {
@@ -161,10 +162,12 @@ func (kq *KeysQuery) OnlyIDX(ctx context.Context) string {
 
 // All executes the query and returns a list of KeysSlice.
 func (kq *KeysQuery) All(ctx context.Context) ([]*Keys, error) {
+	ctx = newQueryContext(ctx, TypeKeys, "All")
 	if err := kq.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
-	return kq.sqlAll(ctx)
+	qr := querierAll[[]*Keys, *KeysQuery]()
+	return withInterceptors[[]*Keys](ctx, kq, qr, kq.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
@@ -179,6 +182,7 @@ func (kq *KeysQuery) AllX(ctx context.Context) []*Keys {
 // IDs executes the query and returns a list of Keys IDs.
 func (kq *KeysQuery) IDs(ctx context.Context) ([]string, error) {
 	var ids []string
+	ctx = newQueryContext(ctx, TypeKeys, "IDs")
 	if err := kq.Select(keys.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
@@ -196,10 +200,11 @@ func (kq *KeysQuery) IDsX(ctx context.Context) []string {
 
 // Count returns the count of the given query.
 func (kq *KeysQuery) Count(ctx context.Context) (int, error) {
+	ctx = newQueryContext(ctx, TypeKeys, "Count")
 	if err := kq.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return kq.sqlCount(ctx)
+	return withInterceptors[int](ctx, kq, querierCount[*KeysQuery](), kq.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
@@ -213,10 +218,15 @@ func (kq *KeysQuery) CountX(ctx context.Context) int {
 
 // Exist returns true if the query has elements in the graph.
 func (kq *KeysQuery) Exist(ctx context.Context) (bool, error) {
-	if err := kq.prepareQuery(ctx); err != nil {
-		return false, err
+	ctx = newQueryContext(ctx, TypeKeys, "Exist")
+	switch _, err := kq.FirstID(ctx); {
+	case IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("db: check existence: %w", err)
+	default:
+		return true, nil
 	}
-	return kq.sqlExist(ctx)
 }
 
 // ExistX is like Exist, but panics if an error occurs.
@@ -239,6 +249,7 @@ func (kq *KeysQuery) Clone() *KeysQuery {
 		limit:      kq.limit,
 		offset:     kq.offset,
 		order:      append([]OrderFunc{}, kq.order...),
+		inters:     append([]Interceptor{}, kq.inters...),
 		predicates: append([]predicate.Keys{}, kq.predicates...),
 		// clone intermediate query.
 		sql:    kq.sql.Clone(),
@@ -261,18 +272,12 @@ func (kq *KeysQuery) Clone() *KeysQuery {
 //		GroupBy(keys.FieldVerificationKeys).
 //		Aggregate(db.Count()).
 //		Scan(ctx, &v)
-//
 func (kq *KeysQuery) GroupBy(field string, fields ...string) *KeysGroupBy {
-	grbuild := &KeysGroupBy{config: kq.config}
-	grbuild.fields = append([]string{field}, fields...)
-	grbuild.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := kq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return kq.sqlQuery(ctx), nil
-	}
+	kq.fields = append([]string{field}, fields...)
+	grbuild := &KeysGroupBy{build: kq}
+	grbuild.flds = &kq.fields
 	grbuild.label = keys.Label
-	grbuild.flds, grbuild.scan = &grbuild.fields, grbuild.Scan
+	grbuild.scan = grbuild.Scan
 	return grbuild
 }
 
@@ -288,16 +293,30 @@ func (kq *KeysQuery) GroupBy(field string, fields ...string) *KeysGroupBy {
 //	client.Keys.Query().
 //		Select(keys.FieldVerificationKeys).
 //		Scan(ctx, &v)
-//
 func (kq *KeysQuery) Select(fields ...string) *KeysSelect {
 	kq.fields = append(kq.fields, fields...)
-	selbuild := &KeysSelect{KeysQuery: kq}
-	selbuild.label = keys.Label
-	selbuild.flds, selbuild.scan = &kq.fields, selbuild.Scan
-	return selbuild
+	sbuild := &KeysSelect{KeysQuery: kq}
+	sbuild.label = keys.Label
+	sbuild.flds, sbuild.scan = &kq.fields, sbuild.Scan
+	return sbuild
+}
+
+// Aggregate returns a KeysSelect configured with the given aggregations.
+func (kq *KeysQuery) Aggregate(fns ...AggregateFunc) *KeysSelect {
+	return kq.Select().Aggregate(fns...)
 }
 
 func (kq *KeysQuery) prepareQuery(ctx context.Context) error {
+	for _, inter := range kq.inters {
+		if inter == nil {
+			return fmt.Errorf("db: uninitialized interceptor (forgotten import db/runtime?)")
+		}
+		if trv, ok := inter.(Traverser); ok {
+			if err := trv.Traverse(ctx, kq); err != nil {
+				return err
+			}
+		}
+	}
 	for _, f := range kq.fields {
 		if !keys.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("db: invalid field %q for query", f)}
@@ -318,10 +337,10 @@ func (kq *KeysQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Keys, e
 		nodes = []*Keys{}
 		_spec = kq.querySpec()
 	)
-	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
+	_spec.ScanValues = func(columns []string) ([]any, error) {
 		return (*Keys).scanValues(nil, columns)
 	}
-	_spec.Assign = func(columns []string, values []interface{}) error {
+	_spec.Assign = func(columns []string, values []any) error {
 		node := &Keys{config: kq.config}
 		nodes = append(nodes, node)
 		return node.assignValues(columns, values)
@@ -345,14 +364,6 @@ func (kq *KeysQuery) sqlCount(ctx context.Context) (int, error) {
 		_spec.Unique = kq.unique != nil && *kq.unique
 	}
 	return sqlgraph.CountNodes(ctx, kq.driver, _spec)
-}
-
-func (kq *KeysQuery) sqlExist(ctx context.Context) (bool, error) {
-	n, err := kq.sqlCount(ctx)
-	if err != nil {
-		return false, fmt.Errorf("db: check existence: %w", err)
-	}
-	return n > 0, nil
 }
 
 func (kq *KeysQuery) querySpec() *sqlgraph.QuerySpec {
@@ -437,13 +448,8 @@ func (kq *KeysQuery) sqlQuery(ctx context.Context) *sql.Selector {
 
 // KeysGroupBy is the group-by builder for Keys entities.
 type KeysGroupBy struct {
-	config
 	selector
-	fields []string
-	fns    []AggregateFunc
-	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	build *KeysQuery
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
@@ -452,74 +458,77 @@ func (kgb *KeysGroupBy) Aggregate(fns ...AggregateFunc) *KeysGroupBy {
 	return kgb
 }
 
-// Scan applies the group-by query and scans the result into the given value.
-func (kgb *KeysGroupBy) Scan(ctx context.Context, v interface{}) error {
-	query, err := kgb.path(ctx)
-	if err != nil {
+// Scan applies the selector query and scans the result into the given value.
+func (kgb *KeysGroupBy) Scan(ctx context.Context, v any) error {
+	ctx = newQueryContext(ctx, TypeKeys, "GroupBy")
+	if err := kgb.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	kgb.sql = query
-	return kgb.sqlScan(ctx, v)
+	return scanWithInterceptors[*KeysQuery, *KeysGroupBy](ctx, kgb.build, kgb, kgb.build.inters, v)
 }
 
-func (kgb *KeysGroupBy) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range kgb.fields {
-		if !keys.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for group-by", f)}
-		}
+func (kgb *KeysGroupBy) sqlScan(ctx context.Context, root *KeysQuery, v any) error {
+	selector := root.sqlQuery(ctx).Select()
+	aggregation := make([]string, 0, len(kgb.fns))
+	for _, fn := range kgb.fns {
+		aggregation = append(aggregation, fn(selector))
 	}
-	selector := kgb.sqlQuery()
+	if len(selector.SelectedColumns()) == 0 {
+		columns := make([]string, 0, len(*kgb.flds)+len(kgb.fns))
+		for _, f := range *kgb.flds {
+			columns = append(columns, selector.C(f))
+		}
+		columns = append(columns, aggregation...)
+		selector.Select(columns...)
+	}
+	selector.GroupBy(selector.Columns(*kgb.flds...)...)
 	if err := selector.Err(); err != nil {
 		return err
 	}
 	rows := &sql.Rows{}
 	query, args := selector.Query()
-	if err := kgb.driver.Query(ctx, query, args, rows); err != nil {
+	if err := kgb.build.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()
 	return sql.ScanSlice(rows, v)
 }
 
-func (kgb *KeysGroupBy) sqlQuery() *sql.Selector {
-	selector := kgb.sql.Select()
-	aggregation := make([]string, 0, len(kgb.fns))
-	for _, fn := range kgb.fns {
-		aggregation = append(aggregation, fn(selector))
-	}
-	// If no columns were selected in a custom aggregation function, the default
-	// selection is the fields used for "group-by", and the aggregation functions.
-	if len(selector.SelectedColumns()) == 0 {
-		columns := make([]string, 0, len(kgb.fields)+len(kgb.fns))
-		for _, f := range kgb.fields {
-			columns = append(columns, selector.C(f))
-		}
-		columns = append(columns, aggregation...)
-		selector.Select(columns...)
-	}
-	return selector.GroupBy(selector.Columns(kgb.fields...)...)
-}
-
 // KeysSelect is the builder for selecting fields of Keys entities.
 type KeysSelect struct {
 	*KeysQuery
 	selector
-	// intermediate query (i.e. traversal path).
-	sql *sql.Selector
+}
+
+// Aggregate adds the given aggregation functions to the selector query.
+func (ks *KeysSelect) Aggregate(fns ...AggregateFunc) *KeysSelect {
+	ks.fns = append(ks.fns, fns...)
+	return ks
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (ks *KeysSelect) Scan(ctx context.Context, v interface{}) error {
+func (ks *KeysSelect) Scan(ctx context.Context, v any) error {
+	ctx = newQueryContext(ctx, TypeKeys, "Select")
 	if err := ks.prepareQuery(ctx); err != nil {
 		return err
 	}
-	ks.sql = ks.KeysQuery.sqlQuery(ctx)
-	return ks.sqlScan(ctx, v)
+	return scanWithInterceptors[*KeysQuery, *KeysSelect](ctx, ks.KeysQuery, ks, ks.inters, v)
 }
 
-func (ks *KeysSelect) sqlScan(ctx context.Context, v interface{}) error {
+func (ks *KeysSelect) sqlScan(ctx context.Context, root *KeysQuery, v any) error {
+	selector := root.sqlQuery(ctx)
+	aggregation := make([]string, 0, len(ks.fns))
+	for _, fn := range ks.fns {
+		aggregation = append(aggregation, fn(selector))
+	}
+	switch n := len(*ks.selector.flds); {
+	case n == 0 && len(aggregation) > 0:
+		selector.Select(aggregation...)
+	case n != 0 && len(aggregation) > 0:
+		selector.AppendSelect(aggregation...)
+	}
 	rows := &sql.Rows{}
-	query, args := ks.sql.Query()
+	query, args := selector.Query()
 	if err := ks.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}

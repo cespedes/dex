@@ -211,7 +211,8 @@ type AuthRequest struct {
 	// attempts.
 	ForceApprovalPrompt bool
 
-	Expiry time.Time
+	Creation time.Time
+	Expiry   time.Time
 
 	// Has the user proved their identity through a backing identity provider?
 	//

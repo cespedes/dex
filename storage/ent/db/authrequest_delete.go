@@ -4,7 +4,6 @@ package db
 
 import (
 	"context"
-	"fmt"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
@@ -28,34 +27,7 @@ func (ard *AuthRequestDelete) Where(ps ...predicate.AuthRequest) *AuthRequestDel
 
 // Exec executes the deletion query and returns how many vertices were deleted.
 func (ard *AuthRequestDelete) Exec(ctx context.Context) (int, error) {
-	var (
-		err      error
-		affected int
-	)
-	if len(ard.hooks) == 0 {
-		affected, err = ard.sqlExec(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*AuthRequestMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			ard.mutation = mutation
-			affected, err = ard.sqlExec(ctx)
-			mutation.done = true
-			return affected, err
-		})
-		for i := len(ard.hooks) - 1; i >= 0; i-- {
-			if ard.hooks[i] == nil {
-				return 0, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = ard.hooks[i](mut)
-		}
-		if _, err := mut.Mutate(ctx, ard.mutation); err != nil {
-			return 0, err
-		}
-	}
-	return affected, err
+	return withHooks[int, AuthRequestMutation](ctx, ard.sqlExec, ard.mutation, ard.hooks)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
@@ -88,6 +60,7 @@ func (ard *AuthRequestDelete) sqlExec(ctx context.Context) (int, error) {
 	if err != nil && sqlgraph.IsConstraintError(err) {
 		err = &ConstraintError{msg: err.Error(), wrap: err}
 	}
+	ard.mutation.done = true
 	return affected, err
 }
 

@@ -32,8 +32,8 @@ type DeviceRequest struct {
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
-func (*DeviceRequest) scanValues(columns []string) ([]interface{}, error) {
-	values := make([]interface{}, len(columns))
+func (*DeviceRequest) scanValues(columns []string) ([]any, error) {
+	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
 		case devicerequest.FieldScopes:
@@ -53,7 +53,7 @@ func (*DeviceRequest) scanValues(columns []string) ([]interface{}, error) {
 
 // assignValues assigns the values that were returned from sql.Rows (after scanning)
 // to the DeviceRequest fields.
-func (dr *DeviceRequest) assignValues(columns []string, values []interface{}) error {
+func (dr *DeviceRequest) assignValues(columns []string, values []any) error {
 	if m, n := len(values), len(columns); m < n {
 		return fmt.Errorf("mismatch number of scan values: %d != %d", m, n)
 	}

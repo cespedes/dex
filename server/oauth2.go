@@ -609,6 +609,7 @@ func (s *Server) validateCrossClientTrust(clientID, peerID string) (trusted bool
 }
 
 func validateRedirectURI(client storage.Client, redirectURI string) bool {
+	fmt.Printf("XXX validateRedirectURI(): client.Public=%v client.RedirectURIs=%v\n", client.Public, client.RedirectURIs)
 	// Allow named RedirectURIs for both public and non-public clients.
 	// This is required make PKCE-enabled web apps work, when configured as public clients.
 	for _, uri := range client.RedirectURIs {

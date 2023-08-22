@@ -22,6 +22,7 @@ type RefreshTokenQuery struct {
 	unique     *bool
 	order      []OrderFunc
 	fields     []string
+	inters     []Interceptor
 	predicates []predicate.RefreshToken
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -34,13 +35,13 @@ func (rtq *RefreshTokenQuery) Where(ps ...predicate.RefreshToken) *RefreshTokenQ
 	return rtq
 }
 
-// Limit adds a limit step to the query.
+// Limit the number of records to be returned by this query.
 func (rtq *RefreshTokenQuery) Limit(limit int) *RefreshTokenQuery {
 	rtq.limit = &limit
 	return rtq
 }
 
-// Offset adds an offset step to the query.
+// Offset to start from.
 func (rtq *RefreshTokenQuery) Offset(offset int) *RefreshTokenQuery {
 	rtq.offset = &offset
 	return rtq
@@ -53,7 +54,7 @@ func (rtq *RefreshTokenQuery) Unique(unique bool) *RefreshTokenQuery {
 	return rtq
 }
 
-// Order adds an order step to the query.
+// Order specifies how the records should be ordered.
 func (rtq *RefreshTokenQuery) Order(o ...OrderFunc) *RefreshTokenQuery {
 	rtq.order = append(rtq.order, o...)
 	return rtq
@@ -62,7 +63,7 @@ func (rtq *RefreshTokenQuery) Order(o ...OrderFunc) *RefreshTokenQuery {
 // First returns the first RefreshToken entity from the query.
 // Returns a *NotFoundError when no RefreshToken was found.
 func (rtq *RefreshTokenQuery) First(ctx context.Context) (*RefreshToken, error) {
-	nodes, err := rtq.Limit(1).All(ctx)
+	nodes, err := rtq.Limit(1).All(newQueryContext(ctx, TypeRefreshToken, "First"))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +86,7 @@ func (rtq *RefreshTokenQuery) FirstX(ctx context.Context) *RefreshToken {
 // Returns a *NotFoundError when no RefreshToken ID was found.
 func (rtq *RefreshTokenQuery) FirstID(ctx context.Context) (id string, err error) {
 	var ids []string
-	if ids, err = rtq.Limit(1).IDs(ctx); err != nil {
+	if ids, err = rtq.Limit(1).IDs(newQueryContext(ctx, TypeRefreshToken, "FirstID")); err != nil {
 		return
 	}
 	if len(ids) == 0 {
@@ -108,7 +109,7 @@ func (rtq *RefreshTokenQuery) FirstIDX(ctx context.Context) string {
 // Returns a *NotSingularError when more than one RefreshToken entity is found.
 // Returns a *NotFoundError when no RefreshToken entities are found.
 func (rtq *RefreshTokenQuery) Only(ctx context.Context) (*RefreshToken, error) {
-	nodes, err := rtq.Limit(2).All(ctx)
+	nodes, err := rtq.Limit(2).All(newQueryContext(ctx, TypeRefreshToken, "Only"))
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +137,7 @@ func (rtq *RefreshTokenQuery) OnlyX(ctx context.Context) *RefreshToken {
 // Returns a *NotFoundError when no entities are found.
 func (rtq *RefreshTokenQuery) OnlyID(ctx context.Context) (id string, err error) {
 	var ids []string
-	if ids, err = rtq.Limit(2).IDs(ctx); err != nil {
+	if ids, err = rtq.Limit(2).IDs(newQueryContext(ctx, TypeRefreshToken, "OnlyID")); err != nil {
 		return
 	}
 	switch len(ids) {
@@ -161,10 +162,12 @@ func (rtq *RefreshTokenQuery) OnlyIDX(ctx context.Context) string {
 
 // All executes the query and returns a list of RefreshTokens.
 func (rtq *RefreshTokenQuery) All(ctx context.Context) ([]*RefreshToken, error) {
+	ctx = newQueryContext(ctx, TypeRefreshToken, "All")
 	if err := rtq.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
-	return rtq.sqlAll(ctx)
+	qr := querierAll[[]*RefreshToken, *RefreshTokenQuery]()
+	return withInterceptors[[]*RefreshToken](ctx, rtq, qr, rtq.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
@@ -179,6 +182,7 @@ func (rtq *RefreshTokenQuery) AllX(ctx context.Context) []*RefreshToken {
 // IDs executes the query and returns a list of RefreshToken IDs.
 func (rtq *RefreshTokenQuery) IDs(ctx context.Context) ([]string, error) {
 	var ids []string
+	ctx = newQueryContext(ctx, TypeRefreshToken, "IDs")
 	if err := rtq.Select(refreshtoken.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
@@ -196,10 +200,11 @@ func (rtq *RefreshTokenQuery) IDsX(ctx context.Context) []string {
 
 // Count returns the count of the given query.
 func (rtq *RefreshTokenQuery) Count(ctx context.Context) (int, error) {
+	ctx = newQueryContext(ctx, TypeRefreshToken, "Count")
 	if err := rtq.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return rtq.sqlCount(ctx)
+	return withInterceptors[int](ctx, rtq, querierCount[*RefreshTokenQuery](), rtq.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
@@ -213,10 +218,15 @@ func (rtq *RefreshTokenQuery) CountX(ctx context.Context) int {
 
 // Exist returns true if the query has elements in the graph.
 func (rtq *RefreshTokenQuery) Exist(ctx context.Context) (bool, error) {
-	if err := rtq.prepareQuery(ctx); err != nil {
-		return false, err
+	ctx = newQueryContext(ctx, TypeRefreshToken, "Exist")
+	switch _, err := rtq.FirstID(ctx); {
+	case IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("db: check existence: %w", err)
+	default:
+		return true, nil
 	}
-	return rtq.sqlExist(ctx)
 }
 
 // ExistX is like Exist, but panics if an error occurs.
@@ -239,6 +249,7 @@ func (rtq *RefreshTokenQuery) Clone() *RefreshTokenQuery {
 		limit:      rtq.limit,
 		offset:     rtq.offset,
 		order:      append([]OrderFunc{}, rtq.order...),
+		inters:     append([]Interceptor{}, rtq.inters...),
 		predicates: append([]predicate.RefreshToken{}, rtq.predicates...),
 		// clone intermediate query.
 		sql:    rtq.sql.Clone(),
@@ -261,18 +272,12 @@ func (rtq *RefreshTokenQuery) Clone() *RefreshTokenQuery {
 //		GroupBy(refreshtoken.FieldClientID).
 //		Aggregate(db.Count()).
 //		Scan(ctx, &v)
-//
 func (rtq *RefreshTokenQuery) GroupBy(field string, fields ...string) *RefreshTokenGroupBy {
-	grbuild := &RefreshTokenGroupBy{config: rtq.config}
-	grbuild.fields = append([]string{field}, fields...)
-	grbuild.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := rtq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return rtq.sqlQuery(ctx), nil
-	}
+	rtq.fields = append([]string{field}, fields...)
+	grbuild := &RefreshTokenGroupBy{build: rtq}
+	grbuild.flds = &rtq.fields
 	grbuild.label = refreshtoken.Label
-	grbuild.flds, grbuild.scan = &grbuild.fields, grbuild.Scan
+	grbuild.scan = grbuild.Scan
 	return grbuild
 }
 
@@ -288,16 +293,30 @@ func (rtq *RefreshTokenQuery) GroupBy(field string, fields ...string) *RefreshTo
 //	client.RefreshToken.Query().
 //		Select(refreshtoken.FieldClientID).
 //		Scan(ctx, &v)
-//
 func (rtq *RefreshTokenQuery) Select(fields ...string) *RefreshTokenSelect {
 	rtq.fields = append(rtq.fields, fields...)
-	selbuild := &RefreshTokenSelect{RefreshTokenQuery: rtq}
-	selbuild.label = refreshtoken.Label
-	selbuild.flds, selbuild.scan = &rtq.fields, selbuild.Scan
-	return selbuild
+	sbuild := &RefreshTokenSelect{RefreshTokenQuery: rtq}
+	sbuild.label = refreshtoken.Label
+	sbuild.flds, sbuild.scan = &rtq.fields, sbuild.Scan
+	return sbuild
+}
+
+// Aggregate returns a RefreshTokenSelect configured with the given aggregations.
+func (rtq *RefreshTokenQuery) Aggregate(fns ...AggregateFunc) *RefreshTokenSelect {
+	return rtq.Select().Aggregate(fns...)
 }
 
 func (rtq *RefreshTokenQuery) prepareQuery(ctx context.Context) error {
+	for _, inter := range rtq.inters {
+		if inter == nil {
+			return fmt.Errorf("db: uninitialized interceptor (forgotten import db/runtime?)")
+		}
+		if trv, ok := inter.(Traverser); ok {
+			if err := trv.Traverse(ctx, rtq); err != nil {
+				return err
+			}
+		}
+	}
 	for _, f := range rtq.fields {
 		if !refreshtoken.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("db: invalid field %q for query", f)}
@@ -318,10 +337,10 @@ func (rtq *RefreshTokenQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([
 		nodes = []*RefreshToken{}
 		_spec = rtq.querySpec()
 	)
-	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
+	_spec.ScanValues = func(columns []string) ([]any, error) {
 		return (*RefreshToken).scanValues(nil, columns)
 	}
-	_spec.Assign = func(columns []string, values []interface{}) error {
+	_spec.Assign = func(columns []string, values []any) error {
 		node := &RefreshToken{config: rtq.config}
 		nodes = append(nodes, node)
 		return node.assignValues(columns, values)
@@ -345,14 +364,6 @@ func (rtq *RefreshTokenQuery) sqlCount(ctx context.Context) (int, error) {
 		_spec.Unique = rtq.unique != nil && *rtq.unique
 	}
 	return sqlgraph.CountNodes(ctx, rtq.driver, _spec)
-}
-
-func (rtq *RefreshTokenQuery) sqlExist(ctx context.Context) (bool, error) {
-	n, err := rtq.sqlCount(ctx)
-	if err != nil {
-		return false, fmt.Errorf("db: check existence: %w", err)
-	}
-	return n > 0, nil
 }
 
 func (rtq *RefreshTokenQuery) querySpec() *sqlgraph.QuerySpec {
@@ -437,13 +448,8 @@ func (rtq *RefreshTokenQuery) sqlQuery(ctx context.Context) *sql.Selector {
 
 // RefreshTokenGroupBy is the group-by builder for RefreshToken entities.
 type RefreshTokenGroupBy struct {
-	config
 	selector
-	fields []string
-	fns    []AggregateFunc
-	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	build *RefreshTokenQuery
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
@@ -452,74 +458,77 @@ func (rtgb *RefreshTokenGroupBy) Aggregate(fns ...AggregateFunc) *RefreshTokenGr
 	return rtgb
 }
 
-// Scan applies the group-by query and scans the result into the given value.
-func (rtgb *RefreshTokenGroupBy) Scan(ctx context.Context, v interface{}) error {
-	query, err := rtgb.path(ctx)
-	if err != nil {
+// Scan applies the selector query and scans the result into the given value.
+func (rtgb *RefreshTokenGroupBy) Scan(ctx context.Context, v any) error {
+	ctx = newQueryContext(ctx, TypeRefreshToken, "GroupBy")
+	if err := rtgb.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	rtgb.sql = query
-	return rtgb.sqlScan(ctx, v)
+	return scanWithInterceptors[*RefreshTokenQuery, *RefreshTokenGroupBy](ctx, rtgb.build, rtgb, rtgb.build.inters, v)
 }
 
-func (rtgb *RefreshTokenGroupBy) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range rtgb.fields {
-		if !refreshtoken.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for group-by", f)}
-		}
+func (rtgb *RefreshTokenGroupBy) sqlScan(ctx context.Context, root *RefreshTokenQuery, v any) error {
+	selector := root.sqlQuery(ctx).Select()
+	aggregation := make([]string, 0, len(rtgb.fns))
+	for _, fn := range rtgb.fns {
+		aggregation = append(aggregation, fn(selector))
 	}
-	selector := rtgb.sqlQuery()
+	if len(selector.SelectedColumns()) == 0 {
+		columns := make([]string, 0, len(*rtgb.flds)+len(rtgb.fns))
+		for _, f := range *rtgb.flds {
+			columns = append(columns, selector.C(f))
+		}
+		columns = append(columns, aggregation...)
+		selector.Select(columns...)
+	}
+	selector.GroupBy(selector.Columns(*rtgb.flds...)...)
 	if err := selector.Err(); err != nil {
 		return err
 	}
 	rows := &sql.Rows{}
 	query, args := selector.Query()
-	if err := rtgb.driver.Query(ctx, query, args, rows); err != nil {
+	if err := rtgb.build.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()
 	return sql.ScanSlice(rows, v)
 }
 
-func (rtgb *RefreshTokenGroupBy) sqlQuery() *sql.Selector {
-	selector := rtgb.sql.Select()
-	aggregation := make([]string, 0, len(rtgb.fns))
-	for _, fn := range rtgb.fns {
-		aggregation = append(aggregation, fn(selector))
-	}
-	// If no columns were selected in a custom aggregation function, the default
-	// selection is the fields used for "group-by", and the aggregation functions.
-	if len(selector.SelectedColumns()) == 0 {
-		columns := make([]string, 0, len(rtgb.fields)+len(rtgb.fns))
-		for _, f := range rtgb.fields {
-			columns = append(columns, selector.C(f))
-		}
-		columns = append(columns, aggregation...)
-		selector.Select(columns...)
-	}
-	return selector.GroupBy(selector.Columns(rtgb.fields...)...)
-}
-
 // RefreshTokenSelect is the builder for selecting fields of RefreshToken entities.
 type RefreshTokenSelect struct {
 	*RefreshTokenQuery
 	selector
-	// intermediate query (i.e. traversal path).
-	sql *sql.Selector
+}
+
+// Aggregate adds the given aggregation functions to the selector query.
+func (rts *RefreshTokenSelect) Aggregate(fns ...AggregateFunc) *RefreshTokenSelect {
+	rts.fns = append(rts.fns, fns...)
+	return rts
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (rts *RefreshTokenSelect) Scan(ctx context.Context, v interface{}) error {
+func (rts *RefreshTokenSelect) Scan(ctx context.Context, v any) error {
+	ctx = newQueryContext(ctx, TypeRefreshToken, "Select")
 	if err := rts.prepareQuery(ctx); err != nil {
 		return err
 	}
-	rts.sql = rts.RefreshTokenQuery.sqlQuery(ctx)
-	return rts.sqlScan(ctx, v)
+	return scanWithInterceptors[*RefreshTokenQuery, *RefreshTokenSelect](ctx, rts.RefreshTokenQuery, rts, rts.inters, v)
 }
 
-func (rts *RefreshTokenSelect) sqlScan(ctx context.Context, v interface{}) error {
+func (rts *RefreshTokenSelect) sqlScan(ctx context.Context, root *RefreshTokenQuery, v any) error {
+	selector := root.sqlQuery(ctx)
+	aggregation := make([]string, 0, len(rts.fns))
+	for _, fn := range rts.fns {
+		aggregation = append(aggregation, fn(selector))
+	}
+	switch n := len(*rts.selector.flds); {
+	case n == 0 && len(aggregation) > 0:
+		selector.Select(aggregation...)
+	case n != 0 && len(aggregation) > 0:
+		selector.AppendSelect(aggregation...)
+	}
 	rows := &sql.Rows{}
-	query, args := rts.sql.Query()
+	query, args := selector.Query()
 	if err := rts.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}

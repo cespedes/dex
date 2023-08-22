@@ -22,6 +22,7 @@ type DeviceTokenQuery struct {
 	unique     *bool
 	order      []OrderFunc
 	fields     []string
+	inters     []Interceptor
 	predicates []predicate.DeviceToken
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
@@ -34,13 +35,13 @@ func (dtq *DeviceTokenQuery) Where(ps ...predicate.DeviceToken) *DeviceTokenQuer
 	return dtq
 }
 
-// Limit adds a limit step to the query.
+// Limit the number of records to be returned by this query.
 func (dtq *DeviceTokenQuery) Limit(limit int) *DeviceTokenQuery {
 	dtq.limit = &limit
 	return dtq
 }
 
-// Offset adds an offset step to the query.
+// Offset to start from.
 func (dtq *DeviceTokenQuery) Offset(offset int) *DeviceTokenQuery {
 	dtq.offset = &offset
 	return dtq
@@ -53,7 +54,7 @@ func (dtq *DeviceTokenQuery) Unique(unique bool) *DeviceTokenQuery {
 	return dtq
 }
 
-// Order adds an order step to the query.
+// Order specifies how the records should be ordered.
 func (dtq *DeviceTokenQuery) Order(o ...OrderFunc) *DeviceTokenQuery {
 	dtq.order = append(dtq.order, o...)
 	return dtq
@@ -62,7 +63,7 @@ func (dtq *DeviceTokenQuery) Order(o ...OrderFunc) *DeviceTokenQuery {
 // First returns the first DeviceToken entity from the query.
 // Returns a *NotFoundError when no DeviceToken was found.
 func (dtq *DeviceTokenQuery) First(ctx context.Context) (*DeviceToken, error) {
-	nodes, err := dtq.Limit(1).All(ctx)
+	nodes, err := dtq.Limit(1).All(newQueryContext(ctx, TypeDeviceToken, "First"))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +86,7 @@ func (dtq *DeviceTokenQuery) FirstX(ctx context.Context) *DeviceToken {
 // Returns a *NotFoundError when no DeviceToken ID was found.
 func (dtq *DeviceTokenQuery) FirstID(ctx context.Context) (id int, err error) {
 	var ids []int
-	if ids, err = dtq.Limit(1).IDs(ctx); err != nil {
+	if ids, err = dtq.Limit(1).IDs(newQueryContext(ctx, TypeDeviceToken, "FirstID")); err != nil {
 		return
 	}
 	if len(ids) == 0 {
@@ -108,7 +109,7 @@ func (dtq *DeviceTokenQuery) FirstIDX(ctx context.Context) int {
 // Returns a *NotSingularError when more than one DeviceToken entity is found.
 // Returns a *NotFoundError when no DeviceToken entities are found.
 func (dtq *DeviceTokenQuery) Only(ctx context.Context) (*DeviceToken, error) {
-	nodes, err := dtq.Limit(2).All(ctx)
+	nodes, err := dtq.Limit(2).All(newQueryContext(ctx, TypeDeviceToken, "Only"))
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +137,7 @@ func (dtq *DeviceTokenQuery) OnlyX(ctx context.Context) *DeviceToken {
 // Returns a *NotFoundError when no entities are found.
 func (dtq *DeviceTokenQuery) OnlyID(ctx context.Context) (id int, err error) {
 	var ids []int
-	if ids, err = dtq.Limit(2).IDs(ctx); err != nil {
+	if ids, err = dtq.Limit(2).IDs(newQueryContext(ctx, TypeDeviceToken, "OnlyID")); err != nil {
 		return
 	}
 	switch len(ids) {
@@ -161,10 +162,12 @@ func (dtq *DeviceTokenQuery) OnlyIDX(ctx context.Context) int {
 
 // All executes the query and returns a list of DeviceTokens.
 func (dtq *DeviceTokenQuery) All(ctx context.Context) ([]*DeviceToken, error) {
+	ctx = newQueryContext(ctx, TypeDeviceToken, "All")
 	if err := dtq.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
-	return dtq.sqlAll(ctx)
+	qr := querierAll[[]*DeviceToken, *DeviceTokenQuery]()
+	return withInterceptors[[]*DeviceToken](ctx, dtq, qr, dtq.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
@@ -179,6 +182,7 @@ func (dtq *DeviceTokenQuery) AllX(ctx context.Context) []*DeviceToken {
 // IDs executes the query and returns a list of DeviceToken IDs.
 func (dtq *DeviceTokenQuery) IDs(ctx context.Context) ([]int, error) {
 	var ids []int
+	ctx = newQueryContext(ctx, TypeDeviceToken, "IDs")
 	if err := dtq.Select(devicetoken.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
@@ -196,10 +200,11 @@ func (dtq *DeviceTokenQuery) IDsX(ctx context.Context) []int {
 
 // Count returns the count of the given query.
 func (dtq *DeviceTokenQuery) Count(ctx context.Context) (int, error) {
+	ctx = newQueryContext(ctx, TypeDeviceToken, "Count")
 	if err := dtq.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return dtq.sqlCount(ctx)
+	return withInterceptors[int](ctx, dtq, querierCount[*DeviceTokenQuery](), dtq.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
@@ -213,10 +218,15 @@ func (dtq *DeviceTokenQuery) CountX(ctx context.Context) int {
 
 // Exist returns true if the query has elements in the graph.
 func (dtq *DeviceTokenQuery) Exist(ctx context.Context) (bool, error) {
-	if err := dtq.prepareQuery(ctx); err != nil {
-		return false, err
+	ctx = newQueryContext(ctx, TypeDeviceToken, "Exist")
+	switch _, err := dtq.FirstID(ctx); {
+	case IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("db: check existence: %w", err)
+	default:
+		return true, nil
 	}
-	return dtq.sqlExist(ctx)
 }
 
 // ExistX is like Exist, but panics if an error occurs.
@@ -239,6 +249,7 @@ func (dtq *DeviceTokenQuery) Clone() *DeviceTokenQuery {
 		limit:      dtq.limit,
 		offset:     dtq.offset,
 		order:      append([]OrderFunc{}, dtq.order...),
+		inters:     append([]Interceptor{}, dtq.inters...),
 		predicates: append([]predicate.DeviceToken{}, dtq.predicates...),
 		// clone intermediate query.
 		sql:    dtq.sql.Clone(),
@@ -261,18 +272,12 @@ func (dtq *DeviceTokenQuery) Clone() *DeviceTokenQuery {
 //		GroupBy(devicetoken.FieldDeviceCode).
 //		Aggregate(db.Count()).
 //		Scan(ctx, &v)
-//
 func (dtq *DeviceTokenQuery) GroupBy(field string, fields ...string) *DeviceTokenGroupBy {
-	grbuild := &DeviceTokenGroupBy{config: dtq.config}
-	grbuild.fields = append([]string{field}, fields...)
-	grbuild.path = func(ctx context.Context) (prev *sql.Selector, err error) {
-		if err := dtq.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		return dtq.sqlQuery(ctx), nil
-	}
+	dtq.fields = append([]string{field}, fields...)
+	grbuild := &DeviceTokenGroupBy{build: dtq}
+	grbuild.flds = &dtq.fields
 	grbuild.label = devicetoken.Label
-	grbuild.flds, grbuild.scan = &grbuild.fields, grbuild.Scan
+	grbuild.scan = grbuild.Scan
 	return grbuild
 }
 
@@ -288,16 +293,30 @@ func (dtq *DeviceTokenQuery) GroupBy(field string, fields ...string) *DeviceToke
 //	client.DeviceToken.Query().
 //		Select(devicetoken.FieldDeviceCode).
 //		Scan(ctx, &v)
-//
 func (dtq *DeviceTokenQuery) Select(fields ...string) *DeviceTokenSelect {
 	dtq.fields = append(dtq.fields, fields...)
-	selbuild := &DeviceTokenSelect{DeviceTokenQuery: dtq}
-	selbuild.label = devicetoken.Label
-	selbuild.flds, selbuild.scan = &dtq.fields, selbuild.Scan
-	return selbuild
+	sbuild := &DeviceTokenSelect{DeviceTokenQuery: dtq}
+	sbuild.label = devicetoken.Label
+	sbuild.flds, sbuild.scan = &dtq.fields, sbuild.Scan
+	return sbuild
+}
+
+// Aggregate returns a DeviceTokenSelect configured with the given aggregations.
+func (dtq *DeviceTokenQuery) Aggregate(fns ...AggregateFunc) *DeviceTokenSelect {
+	return dtq.Select().Aggregate(fns...)
 }
 
 func (dtq *DeviceTokenQuery) prepareQuery(ctx context.Context) error {
+	for _, inter := range dtq.inters {
+		if inter == nil {
+			return fmt.Errorf("db: uninitialized interceptor (forgotten import db/runtime?)")
+		}
+		if trv, ok := inter.(Traverser); ok {
+			if err := trv.Traverse(ctx, dtq); err != nil {
+				return err
+			}
+		}
+	}
 	for _, f := range dtq.fields {
 		if !devicetoken.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("db: invalid field %q for query", f)}
@@ -318,10 +337,10 @@ func (dtq *DeviceTokenQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]
 		nodes = []*DeviceToken{}
 		_spec = dtq.querySpec()
 	)
-	_spec.ScanValues = func(columns []string) ([]interface{}, error) {
+	_spec.ScanValues = func(columns []string) ([]any, error) {
 		return (*DeviceToken).scanValues(nil, columns)
 	}
-	_spec.Assign = func(columns []string, values []interface{}) error {
+	_spec.Assign = func(columns []string, values []any) error {
 		node := &DeviceToken{config: dtq.config}
 		nodes = append(nodes, node)
 		return node.assignValues(columns, values)
@@ -345,14 +364,6 @@ func (dtq *DeviceTokenQuery) sqlCount(ctx context.Context) (int, error) {
 		_spec.Unique = dtq.unique != nil && *dtq.unique
 	}
 	return sqlgraph.CountNodes(ctx, dtq.driver, _spec)
-}
-
-func (dtq *DeviceTokenQuery) sqlExist(ctx context.Context) (bool, error) {
-	n, err := dtq.sqlCount(ctx)
-	if err != nil {
-		return false, fmt.Errorf("db: check existence: %w", err)
-	}
-	return n > 0, nil
 }
 
 func (dtq *DeviceTokenQuery) querySpec() *sqlgraph.QuerySpec {
@@ -437,13 +448,8 @@ func (dtq *DeviceTokenQuery) sqlQuery(ctx context.Context) *sql.Selector {
 
 // DeviceTokenGroupBy is the group-by builder for DeviceToken entities.
 type DeviceTokenGroupBy struct {
-	config
 	selector
-	fields []string
-	fns    []AggregateFunc
-	// intermediate query (i.e. traversal path).
-	sql  *sql.Selector
-	path func(context.Context) (*sql.Selector, error)
+	build *DeviceTokenQuery
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
@@ -452,74 +458,77 @@ func (dtgb *DeviceTokenGroupBy) Aggregate(fns ...AggregateFunc) *DeviceTokenGrou
 	return dtgb
 }
 
-// Scan applies the group-by query and scans the result into the given value.
-func (dtgb *DeviceTokenGroupBy) Scan(ctx context.Context, v interface{}) error {
-	query, err := dtgb.path(ctx)
-	if err != nil {
+// Scan applies the selector query and scans the result into the given value.
+func (dtgb *DeviceTokenGroupBy) Scan(ctx context.Context, v any) error {
+	ctx = newQueryContext(ctx, TypeDeviceToken, "GroupBy")
+	if err := dtgb.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	dtgb.sql = query
-	return dtgb.sqlScan(ctx, v)
+	return scanWithInterceptors[*DeviceTokenQuery, *DeviceTokenGroupBy](ctx, dtgb.build, dtgb, dtgb.build.inters, v)
 }
 
-func (dtgb *DeviceTokenGroupBy) sqlScan(ctx context.Context, v interface{}) error {
-	for _, f := range dtgb.fields {
-		if !devicetoken.ValidColumn(f) {
-			return &ValidationError{Name: f, err: fmt.Errorf("invalid field %q for group-by", f)}
-		}
+func (dtgb *DeviceTokenGroupBy) sqlScan(ctx context.Context, root *DeviceTokenQuery, v any) error {
+	selector := root.sqlQuery(ctx).Select()
+	aggregation := make([]string, 0, len(dtgb.fns))
+	for _, fn := range dtgb.fns {
+		aggregation = append(aggregation, fn(selector))
 	}
-	selector := dtgb.sqlQuery()
+	if len(selector.SelectedColumns()) == 0 {
+		columns := make([]string, 0, len(*dtgb.flds)+len(dtgb.fns))
+		for _, f := range *dtgb.flds {
+			columns = append(columns, selector.C(f))
+		}
+		columns = append(columns, aggregation...)
+		selector.Select(columns...)
+	}
+	selector.GroupBy(selector.Columns(*dtgb.flds...)...)
 	if err := selector.Err(); err != nil {
 		return err
 	}
 	rows := &sql.Rows{}
 	query, args := selector.Query()
-	if err := dtgb.driver.Query(ctx, query, args, rows); err != nil {
+	if err := dtgb.build.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()
 	return sql.ScanSlice(rows, v)
 }
 
-func (dtgb *DeviceTokenGroupBy) sqlQuery() *sql.Selector {
-	selector := dtgb.sql.Select()
-	aggregation := make([]string, 0, len(dtgb.fns))
-	for _, fn := range dtgb.fns {
-		aggregation = append(aggregation, fn(selector))
-	}
-	// If no columns were selected in a custom aggregation function, the default
-	// selection is the fields used for "group-by", and the aggregation functions.
-	if len(selector.SelectedColumns()) == 0 {
-		columns := make([]string, 0, len(dtgb.fields)+len(dtgb.fns))
-		for _, f := range dtgb.fields {
-			columns = append(columns, selector.C(f))
-		}
-		columns = append(columns, aggregation...)
-		selector.Select(columns...)
-	}
-	return selector.GroupBy(selector.Columns(dtgb.fields...)...)
-}
-
 // DeviceTokenSelect is the builder for selecting fields of DeviceToken entities.
 type DeviceTokenSelect struct {
 	*DeviceTokenQuery
 	selector
-	// intermediate query (i.e. traversal path).
-	sql *sql.Selector
+}
+
+// Aggregate adds the given aggregation functions to the selector query.
+func (dts *DeviceTokenSelect) Aggregate(fns ...AggregateFunc) *DeviceTokenSelect {
+	dts.fns = append(dts.fns, fns...)
+	return dts
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (dts *DeviceTokenSelect) Scan(ctx context.Context, v interface{}) error {
+func (dts *DeviceTokenSelect) Scan(ctx context.Context, v any) error {
+	ctx = newQueryContext(ctx, TypeDeviceToken, "Select")
 	if err := dts.prepareQuery(ctx); err != nil {
 		return err
 	}
-	dts.sql = dts.DeviceTokenQuery.sqlQuery(ctx)
-	return dts.sqlScan(ctx, v)
+	return scanWithInterceptors[*DeviceTokenQuery, *DeviceTokenSelect](ctx, dts.DeviceTokenQuery, dts, dts.inters, v)
 }
 
-func (dts *DeviceTokenSelect) sqlScan(ctx context.Context, v interface{}) error {
+func (dts *DeviceTokenSelect) sqlScan(ctx context.Context, root *DeviceTokenQuery, v any) error {
+	selector := root.sqlQuery(ctx)
+	aggregation := make([]string, 0, len(dts.fns))
+	for _, fn := range dts.fns {
+		aggregation = append(aggregation, fn(selector))
+	}
+	switch n := len(*dts.selector.flds); {
+	case n == 0 && len(aggregation) > 0:
+		selector.Select(aggregation...)
+	case n != 0 && len(aggregation) > 0:
+		selector.AppendSelect(aggregation...)
+	}
 	rows := &sql.Rows{}
-	query, args := dts.sql.Query()
+	query, args := selector.Query()
 	if err := dts.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}

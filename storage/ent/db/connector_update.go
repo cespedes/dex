@@ -58,40 +58,7 @@ func (cu *ConnectorUpdate) Mutation() *ConnectorMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (cu *ConnectorUpdate) Save(ctx context.Context) (int, error) {
-	var (
-		err      error
-		affected int
-	)
-	if len(cu.hooks) == 0 {
-		if err = cu.check(); err != nil {
-			return 0, err
-		}
-		affected, err = cu.sqlSave(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*ConnectorMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			if err = cu.check(); err != nil {
-				return 0, err
-			}
-			cu.mutation = mutation
-			affected, err = cu.sqlSave(ctx)
-			mutation.done = true
-			return affected, err
-		})
-		for i := len(cu.hooks) - 1; i >= 0; i-- {
-			if cu.hooks[i] == nil {
-				return 0, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = cu.hooks[i](mut)
-		}
-		if _, err := mut.Mutate(ctx, cu.mutation); err != nil {
-			return 0, err
-		}
-	}
-	return affected, err
+	return withHooks[int, ConnectorMutation](ctx, cu.sqlSave, cu.mutation, cu.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -132,6 +99,9 @@ func (cu *ConnectorUpdate) check() error {
 }
 
 func (cu *ConnectorUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := cu.check(); err != nil {
+		return n, err
+	}
 	_spec := &sqlgraph.UpdateSpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   connector.Table,
@@ -150,32 +120,16 @@ func (cu *ConnectorUpdate) sqlSave(ctx context.Context) (n int, err error) {
 		}
 	}
 	if value, ok := cu.mutation.GetType(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: connector.FieldType,
-		})
+		_spec.SetField(connector.FieldType, field.TypeString, value)
 	}
 	if value, ok := cu.mutation.Name(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: connector.FieldName,
-		})
+		_spec.SetField(connector.FieldName, field.TypeString, value)
 	}
 	if value, ok := cu.mutation.ResourceVersion(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: connector.FieldResourceVersion,
-		})
+		_spec.SetField(connector.FieldResourceVersion, field.TypeString, value)
 	}
 	if value, ok := cu.mutation.Config(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeBytes,
-			Value:  value,
-			Column: connector.FieldConfig,
-		})
+		_spec.SetField(connector.FieldConfig, field.TypeBytes, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, cu.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -185,6 +139,7 @@ func (cu *ConnectorUpdate) sqlSave(ctx context.Context) (n int, err error) {
 		}
 		return 0, err
 	}
+	cu.mutation.done = true
 	return n, nil
 }
 
@@ -234,46 +189,7 @@ func (cuo *ConnectorUpdateOne) Select(field string, fields ...string) *Connector
 
 // Save executes the query and returns the updated Connector entity.
 func (cuo *ConnectorUpdateOne) Save(ctx context.Context) (*Connector, error) {
-	var (
-		err  error
-		node *Connector
-	)
-	if len(cuo.hooks) == 0 {
-		if err = cuo.check(); err != nil {
-			return nil, err
-		}
-		node, err = cuo.sqlSave(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*ConnectorMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			if err = cuo.check(); err != nil {
-				return nil, err
-			}
-			cuo.mutation = mutation
-			node, err = cuo.sqlSave(ctx)
-			mutation.done = true
-			return node, err
-		})
-		for i := len(cuo.hooks) - 1; i >= 0; i-- {
-			if cuo.hooks[i] == nil {
-				return nil, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = cuo.hooks[i](mut)
-		}
-		v, err := mut.Mutate(ctx, cuo.mutation)
-		if err != nil {
-			return nil, err
-		}
-		nv, ok := v.(*Connector)
-		if !ok {
-			return nil, fmt.Errorf("unexpected node type %T returned from ConnectorMutation", v)
-		}
-		node = nv
-	}
-	return node, err
+	return withHooks[*Connector, ConnectorMutation](ctx, cuo.sqlSave, cuo.mutation, cuo.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -314,6 +230,9 @@ func (cuo *ConnectorUpdateOne) check() error {
 }
 
 func (cuo *ConnectorUpdateOne) sqlSave(ctx context.Context) (_node *Connector, err error) {
+	if err := cuo.check(); err != nil {
+		return _node, err
+	}
 	_spec := &sqlgraph.UpdateSpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   connector.Table,
@@ -349,32 +268,16 @@ func (cuo *ConnectorUpdateOne) sqlSave(ctx context.Context) (_node *Connector, e
 		}
 	}
 	if value, ok := cuo.mutation.GetType(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: connector.FieldType,
-		})
+		_spec.SetField(connector.FieldType, field.TypeString, value)
 	}
 	if value, ok := cuo.mutation.Name(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: connector.FieldName,
-		})
+		_spec.SetField(connector.FieldName, field.TypeString, value)
 	}
 	if value, ok := cuo.mutation.ResourceVersion(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: connector.FieldResourceVersion,
-		})
+		_spec.SetField(connector.FieldResourceVersion, field.TypeString, value)
 	}
 	if value, ok := cuo.mutation.Config(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeBytes,
-			Value:  value,
-			Column: connector.FieldConfig,
-		})
+		_spec.SetField(connector.FieldConfig, field.TypeBytes, value)
 	}
 	_node = &Connector{config: cuo.config}
 	_spec.Assign = _node.assignValues
@@ -387,5 +290,6 @@ func (cuo *ConnectorUpdateOne) sqlSave(ctx context.Context) (_node *Connector, e
 		}
 		return nil, err
 	}
+	cuo.mutation.done = true
 	return _node, nil
 }

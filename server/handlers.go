@@ -71,35 +71,37 @@ func (s *Server) handlePublicKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 type discovery struct {
-	Issuer            string   `json:"issuer"`
-	Auth              string   `json:"authorization_endpoint"`
-	Token             string   `json:"token_endpoint"`
-	Keys              string   `json:"jwks_uri"`
-	UserInfo          string   `json:"userinfo_endpoint"`
-	DeviceEndpoint    string   `json:"device_authorization_endpoint"`
-	GrantTypes        []string `json:"grant_types_supported"`
-	ResponseTypes     []string `json:"response_types_supported"`
-	Subjects          []string `json:"subject_types_supported"`
-	IDTokenAlgs       []string `json:"id_token_signing_alg_values_supported"`
-	CodeChallengeAlgs []string `json:"code_challenge_methods_supported"`
-	Scopes            []string `json:"scopes_supported"`
-	AuthMethods       []string `json:"token_endpoint_auth_methods_supported"`
-	Claims            []string `json:"claims_supported"`
+	Issuer             string   `json:"issuer"`
+	Auth               string   `json:"authorization_endpoint"`
+	Token              string   `json:"token_endpoint"`
+	Keys               string   `json:"jwks_uri"`
+	UserInfo           string   `json:"userinfo_endpoint"`
+	DeviceEndpoint     string   `json:"device_authorization_endpoint"`
+	EndSessionEndpoint string   `json:"end_session_endpoint"`
+	GrantTypes         []string `json:"grant_types_supported"`
+	ResponseTypes      []string `json:"response_types_supported"`
+	Subjects           []string `json:"subject_types_supported"`
+	IDTokenAlgs        []string `json:"id_token_signing_alg_values_supported"`
+	CodeChallengeAlgs  []string `json:"code_challenge_methods_supported"`
+	Scopes             []string `json:"scopes_supported"`
+	AuthMethods        []string `json:"token_endpoint_auth_methods_supported"`
+	Claims             []string `json:"claims_supported"`
 }
 
 func (s *Server) discoveryHandler() (http.HandlerFunc, error) {
 	d := discovery{
-		Issuer:            s.issuerURL.String(),
-		Auth:              s.absURL("/auth"),
-		Token:             s.absURL("/token"),
-		Keys:              s.absURL("/keys"),
-		UserInfo:          s.absURL("/userinfo"),
-		DeviceEndpoint:    s.absURL("/device/code"),
-		Subjects:          []string{"public"},
-		IDTokenAlgs:       []string{string(jose.RS256)},
-		CodeChallengeAlgs: []string{codeChallengeMethodS256, codeChallengeMethodPlain},
-		Scopes:            []string{"openid", "email", "groups", "profile", "offline_access"},
-		AuthMethods:       []string{"client_secret_basic", "client_secret_post"},
+		Issuer:             s.issuerURL.String(),
+		Auth:               s.absURL("/auth"),
+		Token:              s.absURL("/token"),
+		Keys:               s.absURL("/keys"),
+		UserInfo:           s.absURL("/userinfo"),
+		DeviceEndpoint:     s.absURL("/device/code"),
+		EndSessionEndpoint: s.issuerURL.String(),
+		Subjects:           []string{"public"},
+		IDTokenAlgs:        []string{string(jose.RS256)},
+		CodeChallengeAlgs:  []string{codeChallengeMethodS256, codeChallengeMethodPlain},
+		Scopes:             []string{"openid", "email", "groups", "profile", "offline_access"},
+		AuthMethods:        []string{"client_secret_basic", "client_secret_post"},
 		Claims: []string{
 			"iss", "sub", "aud", "iat", "exp", "email", "email_verified",
 			"locale", "name", "preferred_username", "at_hash",
@@ -228,7 +230,8 @@ func (s *Server) handleConnectorLogin(w http.ResponseWriter, r *http.Request) {
 	authReq.ConnectorID = connID
 
 	// Actually create the auth request
-	authReq.Expiry = s.now().Add(s.authRequestsValidFor)
+	authReq.Creation = s.now()
+	authReq.Expiry = authReq.Expiry.Add(s.authRequestsValidFor)
 	if err := s.storage.CreateAuthRequest(*authReq); err != nil {
 		s.logger.Errorf("Failed to create authorization request: %v", err)
 		s.renderError(r, w, http.StatusInternalServerError, "Failed to connect to the database.")
@@ -367,6 +370,7 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ok {
+			s.logger.Infof("login failed after %s", time.Now().Sub(authReq.Creation))
 			if err := s.templates.password(r, w, r.URL.String(), username, usernamePrompt(pwConn), true, backLink); err != nil {
 				s.logger.Errorf("Server template error: %v", err)
 			}
@@ -1139,6 +1143,7 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 		return
 	}
 	if !ok {
+		fmt.Println("error in 1143")
 		s.tokenErrHelper(w, errAccessDenied, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}

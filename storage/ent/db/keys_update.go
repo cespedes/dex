@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/dexidp/dex/storage"
 	"github.com/dexidp/dex/storage/ent/db/keys"
@@ -33,6 +34,12 @@ func (ku *KeysUpdate) Where(ps ...predicate.Keys) *KeysUpdate {
 // SetVerificationKeys sets the "verification_keys" field.
 func (ku *KeysUpdate) SetVerificationKeys(sk []storage.VerificationKey) *KeysUpdate {
 	ku.mutation.SetVerificationKeys(sk)
+	return ku
+}
+
+// AppendVerificationKeys appends sk to the "verification_keys" field.
+func (ku *KeysUpdate) AppendVerificationKeys(sk []storage.VerificationKey) *KeysUpdate {
+	ku.mutation.AppendVerificationKeys(sk)
 	return ku
 }
 
@@ -61,34 +68,7 @@ func (ku *KeysUpdate) Mutation() *KeysMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (ku *KeysUpdate) Save(ctx context.Context) (int, error) {
-	var (
-		err      error
-		affected int
-	)
-	if len(ku.hooks) == 0 {
-		affected, err = ku.sqlSave(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*KeysMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			ku.mutation = mutation
-			affected, err = ku.sqlSave(ctx)
-			mutation.done = true
-			return affected, err
-		})
-		for i := len(ku.hooks) - 1; i >= 0; i-- {
-			if ku.hooks[i] == nil {
-				return 0, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = ku.hooks[i](mut)
-		}
-		if _, err := mut.Mutate(ctx, ku.mutation); err != nil {
-			return 0, err
-		}
-	}
-	return affected, err
+	return withHooks[int, KeysMutation](ctx, ku.sqlSave, ku.mutation, ku.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -132,32 +112,21 @@ func (ku *KeysUpdate) sqlSave(ctx context.Context) (n int, err error) {
 		}
 	}
 	if value, ok := ku.mutation.VerificationKeys(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: keys.FieldVerificationKeys,
+		_spec.SetField(keys.FieldVerificationKeys, field.TypeJSON, value)
+	}
+	if value, ok := ku.mutation.AppendedVerificationKeys(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, keys.FieldVerificationKeys, value)
 		})
 	}
 	if value, ok := ku.mutation.SigningKey(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: keys.FieldSigningKey,
-		})
+		_spec.SetField(keys.FieldSigningKey, field.TypeJSON, value)
 	}
 	if value, ok := ku.mutation.SigningKeyPub(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: keys.FieldSigningKeyPub,
-		})
+		_spec.SetField(keys.FieldSigningKeyPub, field.TypeJSON, value)
 	}
 	if value, ok := ku.mutation.NextRotation(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeTime,
-			Value:  value,
-			Column: keys.FieldNextRotation,
-		})
+		_spec.SetField(keys.FieldNextRotation, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, ku.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -167,6 +136,7 @@ func (ku *KeysUpdate) sqlSave(ctx context.Context) (n int, err error) {
 		}
 		return 0, err
 	}
+	ku.mutation.done = true
 	return n, nil
 }
 
@@ -181,6 +151,12 @@ type KeysUpdateOne struct {
 // SetVerificationKeys sets the "verification_keys" field.
 func (kuo *KeysUpdateOne) SetVerificationKeys(sk []storage.VerificationKey) *KeysUpdateOne {
 	kuo.mutation.SetVerificationKeys(sk)
+	return kuo
+}
+
+// AppendVerificationKeys appends sk to the "verification_keys" field.
+func (kuo *KeysUpdateOne) AppendVerificationKeys(sk []storage.VerificationKey) *KeysUpdateOne {
+	kuo.mutation.AppendVerificationKeys(sk)
 	return kuo
 }
 
@@ -216,40 +192,7 @@ func (kuo *KeysUpdateOne) Select(field string, fields ...string) *KeysUpdateOne 
 
 // Save executes the query and returns the updated Keys entity.
 func (kuo *KeysUpdateOne) Save(ctx context.Context) (*Keys, error) {
-	var (
-		err  error
-		node *Keys
-	)
-	if len(kuo.hooks) == 0 {
-		node, err = kuo.sqlSave(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*KeysMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			kuo.mutation = mutation
-			node, err = kuo.sqlSave(ctx)
-			mutation.done = true
-			return node, err
-		})
-		for i := len(kuo.hooks) - 1; i >= 0; i-- {
-			if kuo.hooks[i] == nil {
-				return nil, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = kuo.hooks[i](mut)
-		}
-		v, err := mut.Mutate(ctx, kuo.mutation)
-		if err != nil {
-			return nil, err
-		}
-		nv, ok := v.(*Keys)
-		if !ok {
-			return nil, fmt.Errorf("unexpected node type %T returned from KeysMutation", v)
-		}
-		node = nv
-	}
-	return node, err
+	return withHooks[*Keys, KeysMutation](ctx, kuo.sqlSave, kuo.mutation, kuo.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -310,32 +253,21 @@ func (kuo *KeysUpdateOne) sqlSave(ctx context.Context) (_node *Keys, err error) 
 		}
 	}
 	if value, ok := kuo.mutation.VerificationKeys(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: keys.FieldVerificationKeys,
+		_spec.SetField(keys.FieldVerificationKeys, field.TypeJSON, value)
+	}
+	if value, ok := kuo.mutation.AppendedVerificationKeys(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, keys.FieldVerificationKeys, value)
 		})
 	}
 	if value, ok := kuo.mutation.SigningKey(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: keys.FieldSigningKey,
-		})
+		_spec.SetField(keys.FieldSigningKey, field.TypeJSON, value)
 	}
 	if value, ok := kuo.mutation.SigningKeyPub(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: keys.FieldSigningKeyPub,
-		})
+		_spec.SetField(keys.FieldSigningKeyPub, field.TypeJSON, value)
 	}
 	if value, ok := kuo.mutation.NextRotation(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeTime,
-			Value:  value,
-			Column: keys.FieldNextRotation,
-		})
+		_spec.SetField(keys.FieldNextRotation, field.TypeTime, value)
 	}
 	_node = &Keys{config: kuo.config}
 	_spec.Assign = _node.assignValues
@@ -348,5 +280,6 @@ func (kuo *KeysUpdateOne) sqlSave(ctx context.Context) (_node *Keys, err error) 
 		}
 		return nil, err
 	}
+	kuo.mutation.done = true
 	return _node, nil
 }

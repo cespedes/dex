@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/dexidp/dex/storage/ent/db/devicerequest"
 	"github.com/dexidp/dex/storage/ent/db/predicate"
@@ -58,6 +59,12 @@ func (dru *DeviceRequestUpdate) SetScopes(s []string) *DeviceRequestUpdate {
 	return dru
 }
 
+// AppendScopes appends s to the "scopes" field.
+func (dru *DeviceRequestUpdate) AppendScopes(s []string) *DeviceRequestUpdate {
+	dru.mutation.AppendScopes(s)
+	return dru
+}
+
 // ClearScopes clears the value of the "scopes" field.
 func (dru *DeviceRequestUpdate) ClearScopes() *DeviceRequestUpdate {
 	dru.mutation.ClearScopes()
@@ -77,40 +84,7 @@ func (dru *DeviceRequestUpdate) Mutation() *DeviceRequestMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (dru *DeviceRequestUpdate) Save(ctx context.Context) (int, error) {
-	var (
-		err      error
-		affected int
-	)
-	if len(dru.hooks) == 0 {
-		if err = dru.check(); err != nil {
-			return 0, err
-		}
-		affected, err = dru.sqlSave(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*DeviceRequestMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			if err = dru.check(); err != nil {
-				return 0, err
-			}
-			dru.mutation = mutation
-			affected, err = dru.sqlSave(ctx)
-			mutation.done = true
-			return affected, err
-		})
-		for i := len(dru.hooks) - 1; i >= 0; i-- {
-			if dru.hooks[i] == nil {
-				return 0, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = dru.hooks[i](mut)
-		}
-		if _, err := mut.Mutate(ctx, dru.mutation); err != nil {
-			return 0, err
-		}
-	}
-	return affected, err
+	return withHooks[int, DeviceRequestMutation](ctx, dru.sqlSave, dru.mutation, dru.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -161,6 +135,9 @@ func (dru *DeviceRequestUpdate) check() error {
 }
 
 func (dru *DeviceRequestUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := dru.check(); err != nil {
+		return n, err
+	}
 	_spec := &sqlgraph.UpdateSpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   devicerequest.Table,
@@ -179,52 +156,30 @@ func (dru *DeviceRequestUpdate) sqlSave(ctx context.Context) (n int, err error) 
 		}
 	}
 	if value, ok := dru.mutation.UserCode(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldUserCode,
-		})
+		_spec.SetField(devicerequest.FieldUserCode, field.TypeString, value)
 	}
 	if value, ok := dru.mutation.DeviceCode(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldDeviceCode,
-		})
+		_spec.SetField(devicerequest.FieldDeviceCode, field.TypeString, value)
 	}
 	if value, ok := dru.mutation.ClientID(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldClientID,
-		})
+		_spec.SetField(devicerequest.FieldClientID, field.TypeString, value)
 	}
 	if value, ok := dru.mutation.ClientSecret(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldClientSecret,
-		})
+		_spec.SetField(devicerequest.FieldClientSecret, field.TypeString, value)
 	}
 	if value, ok := dru.mutation.Scopes(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: devicerequest.FieldScopes,
+		_spec.SetField(devicerequest.FieldScopes, field.TypeJSON, value)
+	}
+	if value, ok := dru.mutation.AppendedScopes(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, devicerequest.FieldScopes, value)
 		})
 	}
 	if dru.mutation.ScopesCleared() {
-		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Column: devicerequest.FieldScopes,
-		})
+		_spec.ClearField(devicerequest.FieldScopes, field.TypeJSON)
 	}
 	if value, ok := dru.mutation.Expiry(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeTime,
-			Value:  value,
-			Column: devicerequest.FieldExpiry,
-		})
+		_spec.SetField(devicerequest.FieldExpiry, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, dru.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -234,6 +189,7 @@ func (dru *DeviceRequestUpdate) sqlSave(ctx context.Context) (n int, err error) 
 		}
 		return 0, err
 	}
+	dru.mutation.done = true
 	return n, nil
 }
 
@@ -275,6 +231,12 @@ func (druo *DeviceRequestUpdateOne) SetScopes(s []string) *DeviceRequestUpdateOn
 	return druo
 }
 
+// AppendScopes appends s to the "scopes" field.
+func (druo *DeviceRequestUpdateOne) AppendScopes(s []string) *DeviceRequestUpdateOne {
+	druo.mutation.AppendScopes(s)
+	return druo
+}
+
 // ClearScopes clears the value of the "scopes" field.
 func (druo *DeviceRequestUpdateOne) ClearScopes() *DeviceRequestUpdateOne {
 	druo.mutation.ClearScopes()
@@ -301,46 +263,7 @@ func (druo *DeviceRequestUpdateOne) Select(field string, fields ...string) *Devi
 
 // Save executes the query and returns the updated DeviceRequest entity.
 func (druo *DeviceRequestUpdateOne) Save(ctx context.Context) (*DeviceRequest, error) {
-	var (
-		err  error
-		node *DeviceRequest
-	)
-	if len(druo.hooks) == 0 {
-		if err = druo.check(); err != nil {
-			return nil, err
-		}
-		node, err = druo.sqlSave(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*DeviceRequestMutation)
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			if err = druo.check(); err != nil {
-				return nil, err
-			}
-			druo.mutation = mutation
-			node, err = druo.sqlSave(ctx)
-			mutation.done = true
-			return node, err
-		})
-		for i := len(druo.hooks) - 1; i >= 0; i-- {
-			if druo.hooks[i] == nil {
-				return nil, fmt.Errorf("db: uninitialized hook (forgotten import db/runtime?)")
-			}
-			mut = druo.hooks[i](mut)
-		}
-		v, err := mut.Mutate(ctx, druo.mutation)
-		if err != nil {
-			return nil, err
-		}
-		nv, ok := v.(*DeviceRequest)
-		if !ok {
-			return nil, fmt.Errorf("unexpected node type %T returned from DeviceRequestMutation", v)
-		}
-		node = nv
-	}
-	return node, err
+	return withHooks[*DeviceRequest, DeviceRequestMutation](ctx, druo.sqlSave, druo.mutation, druo.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -391,6 +314,9 @@ func (druo *DeviceRequestUpdateOne) check() error {
 }
 
 func (druo *DeviceRequestUpdateOne) sqlSave(ctx context.Context) (_node *DeviceRequest, err error) {
+	if err := druo.check(); err != nil {
+		return _node, err
+	}
 	_spec := &sqlgraph.UpdateSpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   devicerequest.Table,
@@ -426,52 +352,30 @@ func (druo *DeviceRequestUpdateOne) sqlSave(ctx context.Context) (_node *DeviceR
 		}
 	}
 	if value, ok := druo.mutation.UserCode(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldUserCode,
-		})
+		_spec.SetField(devicerequest.FieldUserCode, field.TypeString, value)
 	}
 	if value, ok := druo.mutation.DeviceCode(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldDeviceCode,
-		})
+		_spec.SetField(devicerequest.FieldDeviceCode, field.TypeString, value)
 	}
 	if value, ok := druo.mutation.ClientID(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldClientID,
-		})
+		_spec.SetField(devicerequest.FieldClientID, field.TypeString, value)
 	}
 	if value, ok := druo.mutation.ClientSecret(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeString,
-			Value:  value,
-			Column: devicerequest.FieldClientSecret,
-		})
+		_spec.SetField(devicerequest.FieldClientSecret, field.TypeString, value)
 	}
 	if value, ok := druo.mutation.Scopes(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Value:  value,
-			Column: devicerequest.FieldScopes,
+		_spec.SetField(devicerequest.FieldScopes, field.TypeJSON, value)
+	}
+	if value, ok := druo.mutation.AppendedScopes(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, devicerequest.FieldScopes, value)
 		})
 	}
 	if druo.mutation.ScopesCleared() {
-		_spec.Fields.Clear = append(_spec.Fields.Clear, &sqlgraph.FieldSpec{
-			Type:   field.TypeJSON,
-			Column: devicerequest.FieldScopes,
-		})
+		_spec.ClearField(devicerequest.FieldScopes, field.TypeJSON)
 	}
 	if value, ok := druo.mutation.Expiry(); ok {
-		_spec.Fields.Set = append(_spec.Fields.Set, &sqlgraph.FieldSpec{
-			Type:   field.TypeTime,
-			Value:  value,
-			Column: devicerequest.FieldExpiry,
-		})
+		_spec.SetField(devicerequest.FieldExpiry, field.TypeTime, value)
 	}
 	_node = &DeviceRequest{config: druo.config}
 	_spec.Assign = _node.assignValues
@@ -484,5 +388,6 @@ func (druo *DeviceRequestUpdateOne) sqlSave(ctx context.Context) (_node *DeviceR
 		}
 		return nil, err
 	}
+	druo.mutation.done = true
 	return _node, nil
 }
